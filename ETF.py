@@ -1,23 +1,139 @@
 import pandas as pd
-# import bs4 as bs
-# import urllib.request
-# import html5lib
+
 
 ###### Part 1 ######
 # Find all the ETFs available for trading in HKEX, using the `read_html` function in Pandas
 ####################
-dfs = pd.read_html('http://www.aastocks.com/tc/stocks/etf/search.aspx?t=1&s=0&o=1&sl=1', encoding='utf8')
-tab_num = 25 # table includes all ETF information
-df = dfs[tab_num]
-ETF_Name = df.iloc[1:len(df),0]
-ETF_Name = ETF_Name.apply(str.split)
+def get_ETF_list(lang='en'):
+    lang = lang  # 'tc' or 'en'
+    url = 'http://www.aastocks.com/' + lang + '/stocks/etf/search.aspx?t=1&s=0&o=1&sl=1'
+    dfs = pd.read_html(url, encoding='utf8')
+    # if lang == 'tc':
+    #     tab_num = 27 # table includes all ETF information
+    # elif lang == 'en':
+    #     tab_num = 24
+    dfs_len = [len(x) for x in dfs]
+    tbl_num = dfs_len.index(max(dfs_len))
+    df = dfs[tbl_num]
+    ETF_Name = df.iloc[1:len(df), 0]
+    non_etf_idx = ETF_Name[~ETF_Name.str.contains('.HK')].index
+    ETF_Name = ETF_Name.drop(non_etf_idx)
+    # ETF_Name = ETF_Name.apply(str.split)
+    ETF_Name = ETF_Name.apply(str.rsplit, args=(' ', 1))
+    ETF_Name.reset_index(inplace=True, drop=True)
+    ETF_Index = df.iloc[1:len(df), 1]
+    ETF_Index = ETF_Index.drop(non_etf_idx)
+    ETF_Index.reset_index(inplace=True, drop=True)
+    return (ETF_Name, ETF_Index)
+
+
+def show_ETF_info():
+    return (pd.concat([ETF_Name, ETF_Index], axis=1))
+
 
 ###
-# Not use: BeautifulSoup functions
+# Correlation Analysis
 ###
-# source = urllib.request.urlopen('http://www.aastocks.com/tc/stocks/etf/search.aspx?t=1&s=0&o=1&sl=1').read()
-# source = urllib.request.urlopen('https://pythonprogramming.net/sitemap.xml').read()
-# soup = bs.BeautifulSoup(source, 'lxml')
+from datetime import date
+#from datetime import datetime
+import time
+
+
+def get_historical(date_start, date_end, ticker):
+    # date_start = date(2017, 1, 1)
+    # date_end = date.today()
+    # ticker = ETF_Name[1][1].strip('0')
+    start_tstmp = int(time.mktime(date_start.timetuple()))
+    end_tstmp = int(time.mktime(date_end.timetuple()))
+    # Ref URL(TC): https://hk.finance.yahoo.com/quote/2800.HK/history?period1=1483200000&period2=1560960000&interval=1mo&filter=history&frequency=1mo
+    # Ref URL(EN): https://finance.yahoo.com/quote/2800.HK/history?period1=1483200000&period2=1561046400&interval=1mo&filter=history&frequency=1mo
+    his_url = 'https://finance.yahoo.com/quote/' + ticker + '/history?period1=' + str(start_tstmp) + '&period2=' + str(
+        end_tstmp) + '&interval=1mo&filter=history&frequency=1mo'
+    print("Getting data of", ticker, "...")
+    his_tbl = pd.read_html(his_url, header=0)
+    df = his_tbl[0]
+    if (df.columns[0] == 'Date'):
+        df = df.iloc[0:len(df) - 1, [0, 5]]  # Only retrieve 'Date' and 'Adj Close'
+        non_price_idx = df[df.iloc[:, 1].str.contains('Dividend')].index
+        # non_price_idx = df[df.iloc[:, 1].isna()].index
+        df = df.drop(non_price_idx)  # Remove 'dividend' information row
+        # datetime.strptime(df.iloc[0,0], '%b %d, %Y').date()
+        df.Date = pd.to_datetime(df.Date)  # faster method?
+        df.iloc[:, 1:df.shape[1]] = df.iloc[:, 1:df.shape[1]].apply(pd.to_numeric, errors='coerce')
+        col_name = ticker + '_Adj_Close'
+        df.columns = ['Date', col_name]
+        # df[ticker] = df.Adj_Close.diff(periods=-1)
+        df[ticker + '_pct_diff'] = df[col_name].pct_change(periods=-1) * 100
+        # return(df.drop(columns=['Adj_Close']).set_index('Date'))
+        return (df.set_index('Date'))
+    else:
+        return (None)
+
+
+def can_add(etf, min_len):
+    if etf is not None:
+        if len(etf) > min_len:
+            if etf.iloc[-min_len:,0].isna().sum() == 0:
+                return True
+    return False
+
+
+def find_nsmallest(corr_mat, n):
+    corr_arr = corr_mat.to_numpy()
+    corrs = corr_arr[np.triu_indices(len(corr_arr), 1)]  # extract the upper triangle
+    abs = np.abs(corrs)
+    abs_sorted = np.sort(abs)
+    pos = [np.argwhere(abs == abs_sorted[i]).item() for i in range(n)]
+    return corrs[pos]
+
+def find_nsmallest_pairs(corr_mtx, num_pairs):
+    smallest_corrs = find_nsmallest(corr_mtx, num_pairs)
+    smallest_pos = [np.argwhere(np.triu(corr_mtx, 1) == v)[0] for v in smallest_corrs]
+    corrs_info = [[corr_mtx.index[smallest_pos[i][0]], corr_mtx.columns[smallest_pos[i][1]], smallest_corrs[i]] for i
+                  in range(len(smallest_corrs))]
+    return corrs_info
+
+
+def find_specific_nsmallest_pairs(ticker, corr_mtx, num_pairs):
+    name = ticker
+    corrs = corr_mtx[corr_mtx.columns == name]
+    return corrs[np.abs(corrs.T).nsmallest(num_pairs, name).index].T
+
+
+if __name__ == '__main__':
+    import numpy as np
+    ETF_Name, ETF_Index = get_ETF_list('tc')
+    #etf_names = ['02800.HK', '03070.HK', '03073.HK', '83170.HK']
+    Names = ETF_Name.tolist()
+    # etf_names = list(zip(*Names))[1][0:2] + list(zip(*Names))[1][3:5]   # https://stackoverflow.com/a/3308805/3243870
+    etf_names = list(zip(*Names))[1]
+    # etf_names = ['02800.HK', '03008.HK', '03073.HK']
+    d1 = date(2017,1,1)
+    d2 = date.today().replace(day=1)
+    month_diff = (d2.year-d1.year)*12 + (d2.month-d1.month)
+    min_len = round(month_diff / 1.5)  # at least the most recent 2/3 of the whole period contains data
+    etfs1 = []
+    etfs1 = [get_historical(d1, d2, etf.strip('0')) for etf in etf_names]
+    # etfs = [x for x in etfs if x is not None]
+    etfs = [x for x in etfs1 if can_add(x, min_len)]
+    # etfs_returns = etfs[0].join(etfs[1:])
+    etfs_close = [df.filter(regex='Adj_Close') for df in etfs]
+    etfs_close_aggr = pd.concat(etfs_close[:], axis=1)
+    etfs_diff = [df.filter(regex='pct_diff') for df in etfs]
+    etfs_diff_aggr = pd.concat(etfs_diff[:], axis=1)
+    etfs_diff_aggr = etfs_diff_aggr.rename(columns=lambda x: re.sub('_pct_diff', '', x))  # remove unnecessary string in column labels
+    etfs_corr = etfs_diff_aggr.corr()
+
+    pair_num = 5
+    ncorrs_nsmallest_pairs = find_nsmallest_pairs(etfs_corr, pair_num)
+    target_ticker = '2800.HK'
+    ticker_nsmallest_pairs = find_specific_nsmallest_pairs(target_ticker, etfs_corr, pair_num)
+    # plt.plot(ticker_nsmallest_pairs, 'rx')
+
+    xlab = target_ticker
+    for i in range(pair_num):
+        ylab = ticker_nsmallest_pairs.index[i]
+        etfs_diff_aggr.loc[:,[xlab, ylab]].plot.scatter(x=xlab, y=ylab)
 
 
 ###### Part 2 ######
@@ -35,9 +151,12 @@ ETF_Name = ETF_Name.apply(str.split)
 
 ###### Part 4 ######
 # Calculate expenses
+# 總開支比率(Total Expense Ratio): 管理費、牌照費、交易費、托管費
+# 其餘︰ 買賣佣金、印花稅、交易徵費(0.0027%))、交易費(0.005%)、CCASS費用(2<=0.002%<=100)
 ####################
 
 
 ###### Part 5 ######
 # Recommendation
 ####################
+
