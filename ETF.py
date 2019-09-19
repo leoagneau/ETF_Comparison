@@ -1,5 +1,8 @@
+import numpy as np
 import pandas as pd
-
+from datetime import date
+import time
+import re
 
 ###### Part 1 ######
 # Find all the ETFs available for trading in HKEX, using the `read_html` function in Pandas
@@ -8,17 +11,10 @@ def get_ETF_list(lang='en'):
     lang = lang  # 'tc' or 'en'
     url = 'http://www.aastocks.com/' + lang + '/stocks/etf/search.aspx?t=1&s=0&o=1&sl=1'
     dfs = pd.read_html(url, encoding='utf8')
-    # if lang == 'tc':
-    #     tab_num = 27 # table includes all ETF information
-    # elif lang == 'en':
-    #     tab_num = 24
-    dfs_len = [len(x) for x in dfs]
-    tbl_num = dfs_len.index(max(dfs_len))
-    df = dfs[tbl_num]
+    df = max(dfs, key=len)  # table includes all ETF information
     ETF_Name = df.iloc[1:len(df), 0]
     non_etf_idx = ETF_Name[~ETF_Name.str.contains('.HK')].index
     ETF_Name = ETF_Name.drop(non_etf_idx)
-    # ETF_Name = ETF_Name.apply(str.split)
     ETF_Name = ETF_Name.apply(str.rsplit, args=(' ', 1))
     ETF_Name.reset_index(inplace=True, drop=True)
     ETF_Index = df.iloc[1:len(df), 1]
@@ -29,14 +25,6 @@ def get_ETF_list(lang='en'):
 
 def show_ETF_info():
     return (pd.concat([ETF_Name, ETF_Index], axis=1))
-
-
-###
-# Correlation Analysis
-###
-from datetime import date
-#from datetime import datetime
-import time
 
 
 def get_historical(date_start, date_end, ticker):
@@ -58,8 +46,8 @@ def get_historical(date_start, date_end, ticker):
         # non_price_idx = df[df.iloc[:, 1].isna()].index
         df = df.drop(non_price_idx)  # Remove 'dividend' information row
         # datetime.strptime(df.iloc[0,0], '%b %d, %Y').date()
-        df.Date = pd.to_datetime(df.Date)  # faster method?
-        df.iloc[:, 1:df.shape[1]] = df.iloc[:, 1:df.shape[1]].apply(pd.to_numeric, errors='coerce')
+        df.Date = pd.to_datetime(df.Date)  # Convert to datetime
+        df.iloc[:, 1:df.shape[1]] = df.iloc[:, 1:df.shape[1]].apply(pd.to_numeric, errors='coerce')  # Convert to numeric
         col_name = ticker + '_Adj_Close'
         df.columns = ['Date', col_name]
         # df[ticker] = df.Adj_Close.diff(periods=-1)
@@ -100,40 +88,35 @@ def find_specific_nsmallest_pairs(ticker, corr_mtx, num_pairs):
     return corrs[np.abs(corrs.T).nsmallest(num_pairs, name).index].T
 
 
+def analyse_corr(corr_mtx, ticker, pair_num):
+    ncorrs_nsmallest_pairs = find_nsmallest_pairs(corr_mtx, pair_num)
+    ticker_nsmallest_pairs = find_specific_nsmallest_pairs(ticker, corr_mtx, pair_num)
+    # plt.plot(ticker_nsmallest_pairs, 'rx')
+    xlab = ticker
+    for i in range(pair_num):
+        ylab = ticker_nsmallest_pairs.index[i]
+        etfs_diff_aggr.loc[:, [xlab, ylab]].plot.scatter(x=xlab, y=ylab)
+
 if __name__ == '__main__':
-    import numpy as np
-    ETF_Name, ETF_Index = get_ETF_list('tc')
-    #etf_names = ['02800.HK', '03070.HK', '03073.HK', '83170.HK']
+    ETF_Name, ETF_Index = get_ETF_list('en')
     Names = ETF_Name.tolist()
-    # etf_names = list(zip(*Names))[1][0:2] + list(zip(*Names))[1][3:5]   # https://stackoverflow.com/a/3308805/3243870
-    etf_names = list(zip(*Names))[1]
-    # etf_names = ['02800.HK', '03008.HK', '03073.HK']
+    etf_tickers = list(zip(*Names))[1]   # https://stackoverflow.com/a/3308805/3243870
     d1 = date(2017,1,1)
     d2 = date.today().replace(day=1)
+    etf_all = []
+    etf_all = [get_historical(d1, d2, etf.strip('0')) for etf in etf_tickers]
     month_diff = (d2.year-d1.year)*12 + (d2.month-d1.month)
     min_len = round(month_diff / 1.5)  # at least the most recent 2/3 of the whole period contains data
-    etfs1 = []
-    etfs1 = [get_historical(d1, d2, etf.strip('0')) for etf in etf_names]
-    # etfs = [x for x in etfs if x is not None]
-    etfs = [x for x in etfs1 if can_add(x, min_len)]
-    # etfs_returns = etfs[0].join(etfs[1:])
-    etfs_close = [df.filter(regex='Adj_Close') for df in etfs]
-    etfs_close_aggr = pd.concat(etfs_close[:], axis=1)
+    etfs = [x for x in etf_all if can_add(x, min_len)]
+    # etfs_close = [df.filter(regex='Adj_Close') for df in etfs]
+    # etfs_close_aggr = pd.concat(etfs_close[:], axis=1)
     etfs_diff = [df.filter(regex='pct_diff') for df in etfs]
     etfs_diff_aggr = pd.concat(etfs_diff[:], axis=1)
     etfs_diff_aggr = etfs_diff_aggr.rename(columns=lambda x: re.sub('_pct_diff', '', x))  # remove unnecessary string in column labels
     etfs_corr = etfs_diff_aggr.corr()
 
-    pair_num = 5
-    ncorrs_nsmallest_pairs = find_nsmallest_pairs(etfs_corr, pair_num)
-    target_ticker = '2800.HK'
-    ticker_nsmallest_pairs = find_specific_nsmallest_pairs(target_ticker, etfs_corr, pair_num)
-    # plt.plot(ticker_nsmallest_pairs, 'rx')
+    analyse_corr(etfs_corr, '2800.HK', 5)
 
-    xlab = target_ticker
-    for i in range(pair_num):
-        ylab = ticker_nsmallest_pairs.index[i]
-        etfs_diff_aggr.loc[:,[xlab, ylab]].plot.scatter(x=xlab, y=ylab)
 
 
 ###### Part 2 ######
