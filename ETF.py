@@ -50,12 +50,20 @@ def get_historical(date_start, date_end, ticker):
         df.iloc[:, 1:df.shape[1]] = df.iloc[:, 1:df.shape[1]].apply(pd.to_numeric, errors='coerce')  # Convert to numeric
         col_name = ticker + '_Adj_Close'
         df.columns = ['Date', col_name]
-        # df[ticker] = df.Adj_Close.diff(periods=-1)
         df[ticker + '_pct_diff'] = df[col_name].pct_change(periods=-1) * 100
         # return(df.drop(columns=['Adj_Close']).set_index('Date'))
         return (df.set_index('Date'))
     else:
         return (None)
+
+
+def exclude_outliers(corr_df):
+    q1s, q3s = np.nanpercentile(corr_df, [25, 75])
+    iqrs = q3s - q1s
+    lbs = q1s - 1.5 * iqrs
+    ubs = q3s + 1.5 * iqrs
+    corr_df[np.logical_or(corr_df < lbs, corr_df > ubs)] = np.nan
+    return(corr_df)
 
 
 def can_add(etf, min_len):
@@ -83,19 +91,18 @@ def find_nsmallest_pairs(corr_mtx, num_pairs):
 
 
 def find_specific_nsmallest_pairs(ticker, corr_mtx, num_pairs):
-    name = ticker
-    corrs = corr_mtx[corr_mtx.columns == name]
-    return corrs[np.abs(corrs.T).nsmallest(num_pairs, name).index].T
+    corrs = corr_mtx[corr_mtx.columns == ticker]
+    return corrs[np.abs(corrs.T).nsmallest(num_pairs, ticker).index].T
 
 
 def analyse_corr(corr_mtx, ticker, pair_num):
     ncorrs_nsmallest_pairs = find_nsmallest_pairs(corr_mtx, pair_num)
     ticker_nsmallest_pairs = find_specific_nsmallest_pairs(ticker, corr_mtx, pair_num)
-    # plt.plot(ticker_nsmallest_pairs, 'rx')
     xlab = ticker
     for i in range(pair_num):
         ylab = ticker_nsmallest_pairs.index[i]
-        etfs_diff_aggr.loc[:, [xlab, ylab]].plot.scatter(x=xlab, y=ylab)
+        corrplot = etfs_diff_aggr.loc[:, [xlab, ylab]].plot.scatter(x=xlab, y=ylab)
+        corrplot.set(xlabel=xlab+", monthly, %", ylabel=ylab+", monthly, %")
 
 if __name__ == '__main__':
     ETF_Name, ETF_Index = get_ETF_list('en')
@@ -114,8 +121,24 @@ if __name__ == '__main__':
     etfs_diff_aggr = pd.concat(etfs_diff[:], axis=1)
     etfs_diff_aggr = etfs_diff_aggr.rename(columns=lambda x: re.sub('_pct_diff', '', x))  # remove unnecessary string in column labels
     etfs_corr = etfs_diff_aggr.corr()
-
     analyse_corr(etfs_corr, '2800.HK', 5)
+
+    ## Exclude outliers
+    etfs_diff_aggr = exclude_outliers(etfs_diff_aggr)
+    etfs_corr = etfs_diff_aggr.corr()
+
+    ## Correlation analysis after excluding outliers
+    ticker = '2800.HK'
+    corr_mtx = etfs_corr
+    pair_num = 6
+    ticker_nsmallest_pairs = find_specific_nsmallest_pairs(ticker, corr_mtx, pair_num)
+    xlab = ticker
+    fig, axes = plt.subplots(pair_num//2,2)
+    fig.subplots_adjust(hspace=0.5)
+    for i in range(pair_num):
+        ylab = ticker_nsmallest_pairs.index[i]
+        corrplot = etfs_diff_aggr.loc[:, [xlab, ylab]].plot.scatter(x=xlab, y=ylab, ax=axes[i//2, i%2])
+        corrplot.set(xlabel="", ylabel="", title=ylab)
 
 
 
