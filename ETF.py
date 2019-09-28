@@ -157,8 +157,8 @@ if __name__ == '__main__':
 
 ###### Part 4 ######
 # Calculate expenses
-# 總開支比率(Total Expense Ratio): 管理費、牌照費、交易費、托管費
-# 其餘︰ 買賣佣金、印花稅、交易徵費(0.0027%))、交易費(0.005%)、CCASS費用(2<=0.002%<=100)
+# 總開支比率(Total Expense Ratio): 管理費(Mgmt fee)、牌照費(License fee)、交易費(Tx fee)、托管費(Custodian fee) etc.
+# 其餘(Other)︰ 買賣佣金(Commission)、印花稅(Stamp duty)、交易徵費(Transaction Levy)(0.0027%)、交易費(Trading fee)(0.005%)、CCASS費用(2<=0.002%<=100) etc.
 ####################
 
 
